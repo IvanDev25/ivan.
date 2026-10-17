@@ -28,7 +28,7 @@ const ticker = (() => {
   let lastTime = 0;
 
   const loop = (time) => {
-    const deltaTime = Math.min(time - (lastTime || time), 64);
+    const deltaTime = clamp(time - (lastTime || time), 0, 64);
     lastTime = time;
     callbacks.forEach((callback) => callback(deltaTime, time));
     frame = callbacks.size ? window.requestAnimationFrame(loop) : 0;
@@ -420,19 +420,12 @@ const playIntro = () => {
     return;
   }
 
-  const counter = preloader.querySelector("[data-preloader-count]");
-  const bar = preloader.querySelector(".preloader-bar span");
-  const minDuration = 1300;
-  let assetsReady = false;
-  let shown = 0;
-  let startTime = 0;
-
-  Promise.race([
+  // The logo shows for at least 1.3s, and until the fonts and laptop image are in (max 4s).
+  const wait = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
+  const assetsReady = Promise.race([
     Promise.all([document.fonts?.ready, whenImageReady(document.querySelector(".monitor-asset"))]),
-    new Promise((resolve) => window.setTimeout(resolve, 4000)),
-  ]).then(() => {
-    assetsReady = true;
-  });
+    wait(4000),
+  ]);
 
   // iOS Safari can ignore overflow: hidden for touch scrolling, so block it directly.
   const blockTouchScroll = (event) => event.preventDefault();
@@ -448,7 +441,7 @@ const playIntro = () => {
     lenis?.start();
 
     window.setTimeout(() => {
-      document.querySelectorAll(".laptop-meta > span:not([data-clock])").forEach((item, index) => {
+      document.querySelectorAll(".laptop-meta > :not([data-clock])").forEach((item, index) => {
         scrambleText(item, { duration: 1000, delay: index * 140 });
       });
     }, 1250);
@@ -459,25 +452,7 @@ const playIntro = () => {
     }, 3600);
   };
 
-  const step = (deltaTime, time) => {
-    if (!startTime) startTime = time;
-    const linear = Math.min((time - startTime) / minDuration, 1);
-    const eased = 1 - Math.pow(1 - linear, 3);
-    const target = assetsReady ? eased * 100 : Math.min(eased * 100, 92);
-
-    shown = damp(shown, target, 0.16, deltaTime);
-    if (assetsReady && linear === 1 && shown > 99.5) shown = 100;
-
-    counter.textContent = String(Math.round(shown)).padStart(3, "0");
-    bar.style.transform = `scaleX(${(shown / 100).toFixed(4)})`;
-
-    if (shown === 100 || root.classList.contains("is-ready")) {
-      ticker.remove(step);
-      window.setTimeout(finish, 220);
-    }
-  };
-
-  ticker.add(step);
+  Promise.all([assetsReady, wait(1300)]).then(() => window.setTimeout(finish, 220));
 };
 
 playIntro();
@@ -832,16 +807,28 @@ const initLaptopDesktop = () => {
     ticker.add(typeStep);
   };
 
-  // Files: one folder per project listed on the page; opening one scrolls to the Projects section.
+  // Files: sidebar tabs for Projects (folders that scroll to the Projects section),
+  // Resume (the PDF, opened in a new tab) and Contact (shortcuts to the contact links).
+  const resume = { name: "Ivan_Joshua_Merete - Resume.pdf", href: "asset/Ivan_Joshua_Merete - Resume.pdf" };
   const filesWindow = windows.get("files");
   const filesGrid = filesWindow?.querySelector(".files-grid");
   const filesStatus = filesWindow?.querySelector(".files-status");
+  const filesTitle = filesWindow?.querySelector(".window-title");
+  const filesTabs = [...(filesWindow?.querySelectorAll(".files-tab") ?? [])];
   const folderIcon =
     '<svg viewBox="0 0 48 40" aria-hidden="true"><path fill="#4d97ec" d="M2 8a4 4 0 0 1 4-4h12l4 4h20a4 4 0 0 1 4 4v22a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4Z"/><path fill="#7cb9f7" d="M2 14h44v20a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4Z"/></svg>';
+  const pdfIcon =
+    '<svg viewBox="0 0 40 48" aria-hidden="true"><path fill="#f6f8fb" stroke="rgba(0,0,0,0.14)" d="M7 1.5h19l10.5 10.5v32A2.5 2.5 0 0 1 34 46.5H7A2.5 2.5 0 0 1 4.5 44V4A2.5 2.5 0 0 1 7 1.5Z"/><path fill="#d3dae6" d="M26 1.5V10a2 2 0 0 0 2 2h8.5Z"/><path stroke="#c9d1de" stroke-width="1.6" stroke-linecap="round" d="M11 17h18M11 21.5h18M11 26h12"/><rect x="1" y="31" width="27" height="11" rx="2.5" fill="#e5383b"/><text x="14.5" y="39.3" text-anchor="middle" fill="#fff" font-family="Manrope, Arial, sans-serif" font-size="7.4" font-weight="800">PDF</text></svg>';
+
   const projectNames = [
     ...[...document.querySelectorAll(".project-list span")].map((item) => item.textContent.trim()),
     ...(document.querySelector(".image-caption strong")?.textContent.split(",") ?? []).map((name) => name.trim()),
   ].filter(Boolean);
+
+  // Contact shortcuts come from the contact section and reuse the dock's matching app icon.
+  const contactLinks = [...document.querySelectorAll(".feature-detail")]
+    .map((detail) => ({ label: detail.querySelector("span")?.textContent.trim(), link: detail.querySelector("a") }))
+    .filter(({ label, link }) => label && link);
 
   const showProjects = () => {
     const target = document.querySelector("#about");
@@ -850,20 +837,82 @@ const initLaptopDesktop = () => {
     else target.scrollIntoView({ behavior: prefersReducedMotion ? "auto" : "smooth" });
   };
 
-  projectNames.forEach((name) => {
-    const item = document.createElement("button");
+  const fileItem = ({ name, icon, href, onClick, title = name, wide = false }) => {
+    const item = document.createElement(href ? "a" : "button");
     const label = document.createElement("span");
-    item.type = "button";
-    item.className = "file-item";
-    item.title = name;
-    item.innerHTML = folderIcon;
+
+    item.className = wide ? "file-item is-wide" : "file-item";
+    item.title = title;
+
+    if (href) {
+      item.href = href;
+      if (!href.startsWith("mailto:")) {
+        item.target = "_blank";
+        item.rel = "noreferrer";
+      }
+    } else {
+      item.type = "button";
+      item.addEventListener("click", onClick);
+    }
+
+    if (typeof icon === "string") item.innerHTML = icon;
+    else item.append(icon);
+
+    label.className = "file-name";
     label.textContent = name;
     item.append(label);
-    item.addEventListener("click", showProjects);
-    filesGrid?.append(item);
-  });
+    return item;
+  };
 
-  if (filesStatus) filesStatus.textContent = `${projectNames.length} items · click a folder to see the work`;
+  const fileTabs = {
+    projects: {
+      title: "Projects",
+      status: `${projectNames.length} items · click a folder to see the work`,
+      items: () => projectNames.map((name) => fileItem({ name, icon: folderIcon, onClick: showProjects })),
+    },
+    resume: {
+      title: "Resume",
+      status: "1 item · PDF document · click to open",
+      items: () => [fileItem({ name: resume.name, icon: pdfIcon, href: encodeURI(resume.href), wide: true })],
+    },
+    contact: {
+      title: "Contact",
+      status: `${contactLinks.length} shortcuts · reach out directly`,
+      items: () =>
+        contactLinks.map(({ label, link }) =>
+          fileItem({
+            name: label,
+            title: link.textContent.trim(),
+            href: link.getAttribute("href"),
+            icon: dock.querySelector(`a[href="${link.getAttribute("href")}"] .dock-icon`)?.cloneNode(true) ?? folderIcon,
+          })
+        ),
+    },
+  };
+
+  const showFilesTab = (key) => {
+    const tab = fileTabs[key];
+    if (!tab || !filesGrid) return;
+
+    filesTabs.forEach((button) => {
+      if (button.dataset.tab === key) button.setAttribute("aria-current", "true");
+      else button.removeAttribute("aria-current");
+    });
+
+    // Fresh items replay the staggered pop-in animation on every switch.
+    filesGrid.replaceChildren(
+      ...tab.items().map((item, index) => {
+        item.style.setProperty("--i", index);
+        return item;
+      })
+    );
+
+    if (filesTitle) filesTitle.textContent = tab.title;
+    if (filesStatus) filesStatus.textContent = tab.status;
+  };
+
+  filesTabs.forEach((button) => button.addEventListener("click", () => showFilesTab(button.dataset.tab)));
+  showFilesTab("projects");
 
   const iconFor = (name) => dock.querySelector(`[data-app="${name}"]`);
 
@@ -872,73 +921,260 @@ const initLaptopDesktop = () => {
     win.style.zIndex = topLayer;
   };
 
-  // Windows grow out of, and shrink back into, their dock icon.
-  const zoomFromDock = (win, name, opening) => {
-    if (prefersReducedMotion) return null;
-    const icon = iconFor(name).getBoundingClientRect();
-    const box = win.getBoundingClientRect();
-    const originX = ((icon.left + icon.width / 2 - box.left) / box.width) * 100;
-    const originY = ((icon.top + icon.height / 2 - box.top) / box.height) * 100;
-    const frames = [
-      { transform: "scale(0.1)", opacity: 0 },
-      { transform: "none", opacity: 1 },
-    ];
+  const lerp = (from, to, amount) => from + (to - from) * amount;
+  const smooth = (value) => value * value * (3 - 2 * value);
 
-    win.style.transformOrigin = `${originX}% ${originY}%`;
-    return win.animate(opening ? frames : frames.reverse(), {
-      duration: opening ? 520 : 360,
-      easing: opening ? "cubic-bezier(0.16, 1, 0.3, 1)" : "cubic-bezier(0.7, 0, 0.84, 0)",
-      fill: opening ? "none" : "forwards",
+  // A rect in the desktop's own (unzoomed) pixels, whatever the laptop's current zoom.
+  const localRect = (element) => {
+    const desk = desktop.getBoundingClientRect();
+    const scale = desk.width / desktop.offsetWidth || 1;
+    const rect = element.getBoundingClientRect();
+    return {
+      left: (rect.left - desk.left) / scale,
+      top: (rect.top - desk.top) / scale,
+      width: rect.width / scale,
+      height: rect.height / scale,
+    };
+  };
+
+  // Perspective matrix that maps the band [0, width] x [bandTop, bandTop + bandHeight] of an
+  // element onto any four corners (top-left, top-right, bottom-right, bottom-left).
+  const quadMatrix = (width, bandTop, bandHeight, [p0, p1, p2, p3]) => {
+    const dx1 = p1.x - p2.x;
+    const dx2 = p3.x - p2.x;
+    const dx3 = p0.x - p1.x + p2.x - p3.x;
+    const dy1 = p1.y - p2.y;
+    const dy2 = p3.y - p2.y;
+    const dy3 = p0.y - p1.y + p2.y - p3.y;
+    const det = dx1 * dy2 - dx2 * dy1 || 1e-6;
+    const g = (dx3 * dy2 - dx2 * dy3) / det;
+    const h = (dx1 * dy3 - dx3 * dy1) / det;
+    const a = p1.x - p0.x + g * p1.x;
+    const b = p3.x - p0.x + h * p3.x;
+    const d = p1.y - p0.y + g * p1.y;
+    const e = p3.y - p0.y + h * p3.y;
+    const shift = bandTop / bandHeight;
+    const m = [
+      a / width, d / width, 0, g / width,
+      b / bandHeight, e / bandHeight, 0, h / bandHeight,
+      0, 0, 1, 0,
+      p0.x - b * shift, p0.y - e * shift, 0, 1 - h * shift,
+    ];
+    return `matrix3d(${m.map((value) => value.toFixed(6)).join(",")})`;
+  };
+
+  // macOS "Genie": the window is cut into horizontal strips (copies clipped to one band each).
+  // Each strip is warped onto a trapezoid whose edges meet its neighbours', so together they
+  // form one smooth funnel that pours into the dock icon. Played backwards, it pours back out.
+  const genie = (win, name, direction) =>
+    new Promise((resolve) => {
+      const from = localRect(win);
+      const to = localRect(iconFor(name).querySelector(".dock-icon"));
+      const funnel = Math.max(to.top - from.top, from.height * 0.6);
+      const count = hasFinePointer ? 32 : 22;
+      const duration = direction === "reverse" ? 560 : 640;
+      const strips = [];
+      // Copying a <canvas> doesn't copy its pixels, so the strips show a snapshot instead.
+      const sourceCanvas = win.querySelector("canvas");
+      const snapshot = sourceCanvas?.width ? sourceCanvas.toDataURL("image/jpeg", 0.85) : null;
+
+      for (let index = 0; index < count; index += 1) {
+        const strip = document.createElement("div");
+        const copy = win.cloneNode(true);
+        const v0 = index / count;
+        const v1 = (index + 1) / count;
+
+        copy.querySelectorAll("canvas").forEach((canvas) => {
+          const image = new Image();
+          image.alt = "";
+          if (snapshot) image.src = snapshot;
+          canvas.replaceWith(image);
+        });
+
+        strip.className = "genie-strip";
+        strip.setAttribute("aria-hidden", "true");
+        strip.inert = true;
+        Object.assign(strip.style, {
+          left: `${from.left}px`,
+          top: `${from.top}px`,
+          width: `${from.width}px`,
+          height: `${from.height}px`,
+          zIndex: win.style.zIndex,
+          clipPath: `inset(${v0 * from.height}px 0 ${Math.max((1 - v1) * from.height - 0.75, 0)}px 0)`,
+        });
+
+        ["data-window", "role", "aria-label", "tabindex"].forEach((attribute) => copy.removeAttribute(attribute));
+        copy.hidden = false;
+        Object.assign(copy.style, {
+          left: "0",
+          top: "0",
+          width: "100%",
+          height: "100%",
+          translate: "none",
+          transform: "none",
+          visibility: "visible",
+        });
+        strip.append(copy);
+        strips.push({ strip, v0, v1 });
+      }
+
+      // The funnel's edges at a given height: wide at the window's top, icon-wide at the dock.
+      const edgesAt = (y, bend) => {
+        const pinch = smooth(clamp((y - from.top) / funnel, 0, 1)) * bend;
+        return [lerp(from.left, to.left, pinch), lerp(from.left + from.width, to.left + to.width, pinch)];
+      };
+
+      const render = (t) => {
+        const bend = smooth(clamp(t / 0.42, 0, 1));
+        const slide = clamp((t - 0.24) / 0.76, 0, 1) ** 2;
+        // Lower parts of the window drop first, so it drains into the dock bottom-first.
+        const yAt = (v) =>
+          lerp(from.top + v * from.height, to.top + v * to.height, clamp(slide * 1.4 - (1 - v) * 0.4, 0, 1));
+        const opacity = String(t < 0.8 ? 1 : 1 - (t - 0.8) / 0.2);
+
+        strips.forEach(({ strip, v0, v1 }) => {
+          const top = yAt(v0);
+          const bottom = yAt(v1);
+          const [topLeft, topRight] = edgesAt(top, bend);
+          const [bottomLeft, bottomRight] = edgesAt(bottom, bend);
+          strip.style.transform = quadMatrix(from.width, v0 * from.height, (v1 - v0) * from.height, [
+            { x: topLeft - from.left, y: top - from.top },
+            { x: topRight - from.left, y: top - from.top },
+            { x: bottomRight - from.left, y: Math.max(bottom, top + 0.01) - from.top },
+            { x: bottomLeft - from.left, y: Math.max(bottom, top + 0.01) - from.top },
+          ]);
+          strip.style.opacity = opacity;
+        });
+      };
+
+      render(direction === "reverse" ? 1 : 0);
+      strips.forEach(({ strip }) => desktop.append(strip));
+
+      let elapsed = 0;
+      const step = (deltaTime) => {
+        elapsed += deltaTime;
+        const progress = Math.min(elapsed / duration, 1);
+        render(direction === "reverse" ? 1 - progress : progress);
+        if (progress < 1) return;
+        ticker.remove(step);
+        resolve(strips);
+      };
+
+      ticker.add(step);
+    });
+
+  const removeStrips = (strips) => strips.forEach(({ strip }) => strip.remove());
+
+  // open: window showing · minimized: hidden, keeps its state and dock dot · closed: app quit.
+  const markState = (name, state) => {
+    const icon = iconFor(name);
+    icon?.classList.toggle("is-open", state !== "closed");
+    icon?.setAttribute("aria-expanded", String(state === "open"));
+  };
+
+  // Close and minimize both genie into the dock; only minimize keeps the window as it was.
+  const genieAway = (name, mode) => {
+    const win = windows.get(name);
+    if (!win || win.hidden || win.dataset.busy) return;
+
+    const finish = () => {
+      delete win.dataset.busy;
+      if (mode === "closed") {
+        win.classList.remove("is-maximized");
+        if (name === "code") ticker.remove(typeStep);
+      }
+    };
+
+    markState(name, mode);
+    if (mode === "minimized") win.dataset.minimized = "true";
+    win.dispatchEvent(new Event(mode === "closed" ? "app:close" : "app:minimize"));
+
+    if (prefersReducedMotion) {
+      win.hidden = true;
+      finish();
+      return;
+    }
+
+    win.dataset.busy = "true";
+    const done = genie(win, name, "normal");
+    win.hidden = true;
+    done.then((strips) => {
+      removeStrips(strips);
+      finish();
     });
   };
 
-  const markOpen = (name, open) => {
-    const icon = iconFor(name);
-    icon?.classList.toggle("is-open", open);
-    icon?.setAttribute("aria-expanded", String(open));
+  const closeWindow = (name) => genieAway(name, "closed");
+  const minimizeWindow = (name) => genieAway(name, "minimized");
+
+  const restoreWindow = (name) => {
+    const win = windows.get(name);
+    if (!win || win.dataset.busy) return;
+
+    delete win.dataset.minimized;
+    raise(win);
+    markState(name, "open");
+    win.hidden = false;
+
+    if (prefersReducedMotion) {
+      win.focus({ preventScroll: true });
+      return;
+    }
+
+    // Lay the window out invisibly so the genie knows where it pours back to.
+    win.dataset.busy = "true";
+    win.style.visibility = "hidden";
+    genie(win, name, "reverse").then((strips) => {
+      win.style.visibility = "";
+      removeStrips(strips);
+      delete win.dataset.busy;
+      win.focus({ preventScroll: true });
+    });
   };
 
   const openWindow = (name) => {
     const win = windows.get(name);
     if (!win) return;
+    if (win.dataset.minimized) {
+      restoreWindow(name);
+      return;
+    }
+
     raise(win);
     if (!win.hidden) return;
 
     win.hidden = false;
-    markOpen(name, true);
-    zoomFromDock(win, name, true);
+    markState(name, "open");
     win.focus({ preventScroll: true });
+    win.dispatchEvent(new Event("app:open"));
     if (name === "code") typeCode();
-  };
 
-  const closeWindow = (name) => {
-    const win = windows.get(name);
-    if (!win || win.hidden || win.dataset.closing) return;
-
-    const animation = zoomFromDock(win, name, false);
-    const finish = () => {
-      win.hidden = true;
-      win.classList.remove("is-maximized");
-      delete win.dataset.closing;
-      animation?.cancel();
-      if (name === "code") ticker.remove(typeStep);
-    };
-
-    win.dataset.closing = "true";
-    markOpen(name, false);
-    if (animation) animation.finished.then(finish, finish);
-    else finish();
+    // A freshly launched app zooms out of its dock icon.
+    if (!prefersReducedMotion) {
+      const icon = iconFor(name).getBoundingClientRect();
+      const box = win.getBoundingClientRect();
+      win.style.transformOrigin = `${((icon.left + icon.width / 2 - box.left) / box.width) * 100}% ${
+        ((icon.top + icon.height / 2 - box.top) / box.height) * 100
+      }%`;
+      win.animate(
+        [
+          { transform: "scale(0.1)", opacity: 0 },
+          { transform: "none", opacity: 1 },
+        ],
+        { duration: 520, easing: "cubic-bezier(0.16, 1, 0.3, 1)" }
+      );
+    }
   };
 
   const frontWindow = () =>
     [...windows.values()]
-      .filter((win) => !win.hidden && !win.dataset.closing)
+      .filter((win) => !win.hidden && !win.dataset.busy)
       .sort((a, b) => Number(b.style.zIndex) - Number(a.style.zIndex))[0];
 
-  // Like a taskbar: an app's icon opens its window, brings it forward, or (if it's already in front) minimizes it.
+  // Like a taskbar: an app's icon opens its window, restores or raises it, or (if it's in front) minimizes it.
   const toggleWindow = (name) => {
     const win = windows.get(name);
-    if (win && win === frontWindow()) closeWindow(name);
+    if (win && win === frontWindow()) minimizeWindow(name);
     else openWindow(name);
   };
 
@@ -954,7 +1190,9 @@ const initLaptopDesktop = () => {
     const app = event.target.closest(".dock-app");
     if (!app) return;
     const name = app.dataset.app;
-    if (!name || windows.get(name)?.hidden) bounce(app);
+    const win = name && windows.get(name);
+    // Only launching bounces; restoring a minimized window doesn't.
+    if (!name || (win?.hidden && !win.dataset.minimized)) bounce(app);
     if (name) toggleWindow(name);
   });
 
@@ -980,7 +1218,7 @@ const initLaptopDesktop = () => {
     let drag = null;
 
     win.querySelector(".window-close")?.addEventListener("click", () => closeWindow(name));
-    win.querySelector(".window-min")?.addEventListener("click", () => closeWindow(name));
+    win.querySelector(".window-min")?.addEventListener("click", () => minimizeWindow(name));
     win.querySelector(".window-max")?.addEventListener("click", () => win.classList.toggle("is-maximized"));
     win.addEventListener("pointerdown", () => raise(win));
     win.addEventListener("keydown", (event) => {
@@ -1029,6 +1267,630 @@ const initLaptopDesktop = () => {
 };
 
 initLaptopDesktop();
+
+/* ---------- Laptop game: full screen on phones ---------- */
+
+// Phones play the laptop's game full screen, outside the small laptop window.
+const createFullScreen = (stage, label, onExit) => {
+  const home = stage.parentElement;
+  let overlay = null;
+
+  const exit = () => {
+    if (!overlay) return;
+    onExit();
+    home.append(stage);
+    overlay.remove();
+    overlay = null;
+    root.classList.remove("is-gaming");
+    lenis?.start();
+  };
+
+  const enter = () => {
+    if (overlay) return;
+    overlay = document.createElement("div");
+    overlay.className = "game-overlay";
+    overlay.tabIndex = -1;
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-label", label);
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "game-exit";
+    button.setAttribute("aria-label", "Exit game");
+    button.textContent = "✕";
+    button.addEventListener("click", exit);
+
+    overlay.append(stage, button);
+    document.body.append(overlay);
+    root.classList.add("is-gaming");
+    lenis?.stop();
+    if (!prefersReducedMotion) {
+      overlay.animate([{ opacity: 0, transform: "scale(0.94)" }, { opacity: 1, transform: "none" }], {
+        duration: 320,
+        easing: "cubic-bezier(0.16, 1, 0.3, 1)",
+      });
+    }
+  };
+
+  return {
+    enter,
+    exit,
+    get element() {
+      return overlay;
+    },
+  };
+};
+
+/* ---------- Road Hop (mini game) ---------- */
+
+// Hop across roads without getting hit. Adapted from the Three.js "Crossy Road" tutorial at
+// javascriptgametutorials.com (video: https://youtu.be/vNr3_hQ3Bws), shared on CodePen under MIT.
+// Three.js only downloads when the app is first opened.
+const THREE_URL = "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.min.js";
+
+const buildRoadHop = (THREE, canvas) => {
+  const minTileIndex = -8;
+  const maxTileIndex = 8;
+  const tilesPerRow = maxTileIndex - minTileIndex + 1;
+  const tileSize = 42;
+  const stepTime = 0.2;
+
+  const randomElement = (array) => array[Math.floor(Math.random() * array.length)];
+
+  const Texture = (width, height, rects) => {
+    const textureCanvas = document.createElement("canvas");
+    textureCanvas.width = width;
+    textureCanvas.height = height;
+    const context = textureCanvas.getContext("2d");
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, width, height);
+    context.fillStyle = "rgba(0,0,0,0.6)";
+    rects.forEach((rect) => context.fillRect(rect.x, rect.y, rect.w, rect.h));
+    return new THREE.CanvasTexture(textureCanvas);
+  };
+
+  const carFrontTexture = Texture(40, 80, [{ x: 0, y: 10, w: 30, h: 60 }]);
+  const carBackTexture = Texture(40, 80, [{ x: 10, y: 10, w: 30, h: 60 }]);
+  const carRightSideTexture = Texture(110, 40, [
+    { x: 10, y: 0, w: 50, h: 30 },
+    { x: 70, y: 0, w: 30, h: 30 },
+  ]);
+  const carLeftSideTexture = Texture(110, 40, [
+    { x: 10, y: 10, w: 50, h: 30 },
+    { x: 70, y: 10, w: 30, h: 30 },
+  ]);
+  const truckFrontTexture = Texture(30, 30, [{ x: 5, y: 0, w: 10, h: 30 }]);
+  const truckRightSideTexture = Texture(25, 30, [{ x: 15, y: 5, w: 10, h: 10 }]);
+  const truckLeftSideTexture = Texture(25, 30, [{ x: 15, y: 15, w: 10, h: 10 }]);
+
+  const box = (width, depth, height, material) => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, depth, height), material);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    return mesh;
+  };
+
+  const Wheel = (x) => {
+    const wheel = new THREE.Mesh(
+      new THREE.BoxGeometry(12, 33, 12),
+      new THREE.MeshLambertMaterial({ color: 0x333333, flatShading: true })
+    );
+    wheel.position.x = x;
+    wheel.position.z = 6;
+    return wheel;
+  };
+
+  const Car = (initialTileIndex, direction, color) => {
+    const car = new THREE.Group();
+    car.position.x = initialTileIndex * tileSize;
+    if (!direction) car.rotation.z = Math.PI;
+
+    const main = box(60, 30, 15, new THREE.MeshLambertMaterial({ color, flatShading: true }));
+    main.position.z = 12;
+    car.add(main);
+
+    const cabin = box(
+      33,
+      24,
+      12,
+      [carBackTexture, carFrontTexture, carRightSideTexture, carLeftSideTexture, null, null].map(
+        (map) => new THREE.MeshPhongMaterial({ color: 0xcccccc, flatShading: true, map })
+      )
+    );
+    cabin.position.x = -6;
+    cabin.position.z = 25.5;
+    car.add(cabin, Wheel(18), Wheel(-18));
+    return car;
+  };
+
+  const Truck = (initialTileIndex, direction, color) => {
+    const truck = new THREE.Group();
+    truck.position.x = initialTileIndex * tileSize;
+    if (!direction) truck.rotation.z = Math.PI;
+
+    const cargo = box(70, 35, 35, new THREE.MeshLambertMaterial({ color: 0xb4c6fc, flatShading: true }));
+    cargo.position.x = -15;
+    cargo.position.z = 25;
+
+    const cabin = box(
+      30,
+      30,
+      30,
+      [truckFrontTexture, null, truckLeftSideTexture, truckRightSideTexture, null, null].map(
+        (map) => new THREE.MeshLambertMaterial({ color, flatShading: true, map })
+      )
+    );
+    cabin.position.x = 35;
+    cabin.position.z = 20;
+    truck.add(cargo, cabin, Wheel(37), Wheel(5), Wheel(-35));
+    return truck;
+  };
+
+  const Tree = (tileIndex, height) => {
+    const tree = new THREE.Group();
+    tree.position.x = tileIndex * tileSize;
+
+    const trunk = new THREE.Mesh(
+      new THREE.BoxGeometry(15, 15, 20),
+      new THREE.MeshLambertMaterial({ color: 0x4d2926, flatShading: true })
+    );
+    trunk.position.z = 10;
+
+    const crown = box(30, 30, height, new THREE.MeshLambertMaterial({ color: 0x7aa21d, flatShading: true }));
+    crown.position.z = height / 2 + 20;
+    tree.add(trunk, crown);
+    return tree;
+  };
+
+  // A row strip, with darker copies either side so the board's edges read clearly.
+  const Strip = (rowIndex, middleColor, sideColor, flat) => {
+    const row = new THREE.Group();
+    row.position.y = rowIndex * tileSize;
+    [middleColor, sideColor, sideColor].forEach((color, index) => {
+      const section = new THREE.Mesh(
+        flat
+          ? new THREE.PlaneGeometry(tilesPerRow * tileSize, tileSize)
+          : new THREE.BoxGeometry(tilesPerRow * tileSize, tileSize, 3),
+        new THREE.MeshLambertMaterial({ color })
+      );
+      section.position.x = [0, -1, 1][index] * tilesPerRow * tileSize;
+      section.receiveShadow = index === 0;
+      row.add(section);
+    });
+    return row;
+  };
+
+  const Grass = (rowIndex) => Strip(rowIndex, 0xbaf455, 0x99c846, false);
+  const Road = (rowIndex) => Strip(rowIndex, 0x454a59, 0x393d49, true);
+
+  const Player = () => {
+    const body = box(15, 15, 20, new THREE.MeshLambertMaterial({ color: "white", flatShading: true }));
+    body.position.z = 10;
+    const cap = box(2, 4, 2, new THREE.MeshLambertMaterial({ color: 0xf0619a, flatShading: true }));
+    cap.position.z = 21;
+
+    const hopper = new THREE.Group();
+    hopper.add(body, cap);
+    const container = new THREE.Group();
+    container.add(hopper);
+    return container;
+  };
+
+  const freeTile = (occupied, spread) => {
+    let tileIndex;
+    do {
+      tileIndex = THREE.MathUtils.randInt(minTileIndex, maxTileIndex);
+    } while (occupied.has(tileIndex));
+    for (let offset = -spread; offset <= spread; offset += 1) occupied.add(tileIndex + offset);
+    return tileIndex;
+  };
+
+  const generateRow = () => {
+    const type = randomElement(["car", "truck", "forest"]);
+    const occupied = new Set();
+
+    if (type === "forest") {
+      return {
+        type,
+        trees: Array.from({ length: 4 }, () => ({ tileIndex: freeTile(occupied, 0), height: randomElement([20, 45, 60]) })),
+      };
+    }
+
+    return {
+      type,
+      direction: randomElement([true, false]),
+      speed: randomElement([125, 156, 188]),
+      vehicles: Array.from({ length: type === "car" ? 3 : 2 }, () => ({
+        initialTileIndex: freeTile(occupied, type === "car" ? 1 : 2),
+        color: randomElement([0xa52523, 0xbdb638, 0x78b14b]),
+      })),
+    };
+  };
+
+  const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, preserveDrawingBuffer: true });
+  renderer.shadowMap.enabled = true;
+
+  const scene = new THREE.Scene();
+  const map = new THREE.Group();
+  const player = Player();
+  const hopper = player.children[0];
+  const metadata = [];
+  const movesQueue = [];
+  const position = { currentRow: 0, currentTile: 0 };
+  let moveTime = 0;
+  let maxRow = 0;
+
+  scene.add(player, map, new THREE.AmbientLight());
+
+  const dirLight = new THREE.DirectionalLight();
+  dirLight.position.set(-100, -100, 200);
+  dirLight.up.set(0, 0, 1);
+  dirLight.castShadow = true;
+  dirLight.shadow.mapSize.set(2048, 2048);
+  Object.assign(dirLight.shadow.camera, { left: -400, right: 400, top: 400, bottom: -400, near: 50, far: 400 });
+  dirLight.shadow.camera.up.set(0, 0, 1);
+  dirLight.target = player;
+  player.add(dirLight);
+
+  const camera = new THREE.OrthographicCamera(-150, 150, 150, -150, 100, 900);
+  camera.up.set(0, 0, 1);
+  camera.position.set(300, -300, 300);
+  camera.lookAt(0, 0, 0);
+  player.add(camera);
+
+  // Free the GPU memory of rows thrown away on restart (textures are shared, so they stay).
+  const dispose = (object) =>
+    object.traverse((child) => {
+      if (!child.isMesh) return;
+      child.geometry.dispose();
+      [].concat(child.material).forEach((material) => material.dispose());
+    });
+
+  const addRows = () => {
+    const startIndex = metadata.length;
+    const rows = Array.from({ length: 20 }, generateRow);
+    metadata.push(...rows);
+
+    rows.forEach((rowData, index) => {
+      const rowIndex = startIndex + index + 1;
+
+      if (rowData.type === "forest") {
+        const row = Grass(rowIndex);
+        rowData.trees.forEach(({ tileIndex, height }) => row.add(Tree(tileIndex, height)));
+        map.add(row);
+        return;
+      }
+
+      const row = Road(rowIndex);
+      rowData.vehicles.forEach((vehicle) => {
+        vehicle.ref = (rowData.type === "car" ? Car : Truck)(vehicle.initialTileIndex, rowData.direction, vehicle.color);
+        row.add(vehicle.ref);
+      });
+      map.add(row);
+    });
+  };
+
+  const reset = () => {
+    map.children.slice().forEach((row) => {
+      map.remove(row);
+      dispose(row);
+    });
+    metadata.length = 0;
+    for (let rowIndex = 0; rowIndex > -10; rowIndex -= 1) map.add(Grass(rowIndex));
+    addRows();
+
+    player.position.set(0, 0, 0);
+    hopper.position.z = 0;
+    hopper.rotation.z = 0;
+    position.currentRow = 0;
+    position.currentTile = 0;
+    movesQueue.length = 0;
+    moveTime = 0;
+    maxRow = 0;
+  };
+
+  const finalPosition = (moves) =>
+    moves.reduce(
+      ({ rowIndex, tileIndex }, direction) => ({
+        rowIndex: rowIndex + (direction === "forward") - (direction === "backward"),
+        tileIndex: tileIndex + (direction === "right") - (direction === "left"),
+      }),
+      { rowIndex: position.currentRow, tileIndex: position.currentTile }
+    );
+
+  const queueMove = (direction) => {
+    if (movesQueue.length > 2) return;
+    const { rowIndex, tileIndex } = finalPosition([...movesQueue, direction]);
+    if (rowIndex === -1 || tileIndex < minTileIndex || tileIndex > maxTileIndex) return;
+    const row = metadata[rowIndex - 1];
+    if (row?.type === "forest" && row.trees.some((tree) => tree.tileIndex === tileIndex)) return;
+    movesQueue.push(direction);
+  };
+
+  const animatePlayer = (delta) => {
+    if (!movesQueue.length) return;
+    moveTime += delta;
+    const progress = Math.min(1, moveTime / stepTime);
+    const direction = movesQueue[0];
+
+    const startX = position.currentTile * tileSize;
+    const startY = position.currentRow * tileSize;
+    player.position.x = THREE.MathUtils.lerp(startX, startX + ((direction === "right") - (direction === "left")) * tileSize, progress);
+    player.position.y = THREE.MathUtils.lerp(startY, startY + ((direction === "forward") - (direction === "backward")) * tileSize, progress);
+    hopper.position.z = Math.sin(progress * Math.PI) * 8;
+
+    const turn = { forward: 0, left: Math.PI / 2, right: -Math.PI / 2, backward: Math.PI }[direction];
+    hopper.rotation.z = THREE.MathUtils.lerp(hopper.rotation.z, turn, progress);
+
+    if (progress < 1) return;
+    movesQueue.shift();
+    moveTime = 0;
+    if (direction === "forward") position.currentRow += 1;
+    if (direction === "backward") position.currentRow -= 1;
+    if (direction === "left") position.currentTile -= 1;
+    if (direction === "right") position.currentTile += 1;
+    maxRow = Math.max(maxRow, position.currentRow);
+    if (position.currentRow > metadata.length - 10) addRows();
+  };
+
+  const animateVehicles = (delta) => {
+    const beginningOfRow = (minTileIndex - 2) * tileSize;
+    const endOfRow = (maxTileIndex + 2) * tileSize;
+
+    metadata.forEach((rowData) => {
+      if (rowData.type === "forest") return;
+      rowData.vehicles.forEach(({ ref }) => {
+        if (rowData.direction) {
+          ref.position.x = ref.position.x > endOfRow ? beginningOfRow : ref.position.x + rowData.speed * delta;
+        } else {
+          ref.position.x = ref.position.x < beginningOfRow ? endOfRow : ref.position.x - rowData.speed * delta;
+        }
+      });
+    });
+  };
+
+  const playerBox = new THREE.Box3();
+  const vehicleBox = new THREE.Box3();
+
+  const hit = () => {
+    const row = metadata[position.currentRow - 1];
+    if (!row || row.type === "forest") return false;
+    playerBox.setFromObject(player);
+    return row.vehicles.some(({ ref }) => playerBox.intersectsBox(vehicleBox.setFromObject(ref)));
+  };
+
+  reset();
+
+  return {
+    reset,
+    queueMove,
+    // Advances the world; returns true when the hopper gets hit.
+    update(delta) {
+      animateVehicles(delta);
+      animatePlayer(delta);
+      return hit();
+    },
+    render: () => renderer.render(scene, camera),
+    resize(width, height) {
+      const size = 300;
+      const ratio = width / height;
+      const viewWidth = ratio < 1 ? size : size * ratio;
+      const viewHeight = ratio < 1 ? size / ratio : size;
+      Object.assign(camera, { left: -viewWidth / 2, right: viewWidth / 2, top: viewHeight / 2, bottom: -viewHeight / 2 });
+      camera.updateProjectionMatrix();
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      renderer.setSize(width, height, false);
+    },
+    get score() {
+      return maxRow;
+    },
+  };
+};
+
+const initRoadHop = () => {
+  const win = document.querySelector('[data-window="hop"]');
+  const stage = win?.querySelector(".game-stage");
+  const canvas = stage?.querySelector("canvas");
+  if (!win || !stage || !canvas) return;
+
+  const panel = stage.querySelector(".game-panel");
+  const panelTitle = panel.querySelector(".game-panel-title");
+  const panelText = panel.querySelector(".game-panel-text");
+  const playButton = panel.querySelector(".game-play");
+  const scoreLabel = stage.querySelector(".hop-score");
+  const touchPlay = !hasFinePointer;
+  const fullScreen = createFullScreen(stage, "Road Hop", () => pause());
+
+  let game = null;
+  let loading = null;
+  let state = "idle";
+  let best = 0;
+  let newBest = false;
+
+  try {
+    best = Number(localStorage.getItem("road-hop-best")) || 0;
+  } catch {}
+
+  const setPanel = (title, text, button) => {
+    panelTitle.textContent = title;
+    panelText.textContent = text;
+    playButton.textContent = button;
+    panel.hidden = false;
+  };
+
+  const showState = (next) => {
+    state = next;
+    stage.dataset.state = next;
+    const score = game?.score ?? 0;
+
+    if (next === "idle") {
+      setPanel(
+        "Road Hop",
+        touchPlay
+          ? "Hop across the roads without getting hit. Tap to hop forward, swipe or use the arrows to move."
+          : "Hop across the roads without getting hit. Arrow keys or WASD to move. Click to hop forward.",
+        game ? "Play" : "Loading…"
+      );
+    } else if (next === "paused") {
+      setPanel("Paused", `Score ${score}`, "Resume");
+    } else if (next === "over") {
+      setPanel("Splat!", `Score ${score} · Best ${best}${newBest ? " · New best!" : ""}`, "Play again");
+    } else if (next === "error") {
+      setPanel("Couldn't load", "The game needs an internet connection to load. Please try again.", "Retry");
+    } else {
+      panel.hidden = true;
+    }
+
+    playButton.disabled = next === "idle" && !game;
+    scoreLabel.textContent = score;
+    canvas.setAttribute("aria-label", `Road Hop game, score ${score}`);
+  };
+
+  const measure = () => {
+    if (!game || !stage.clientWidth || !stage.clientHeight) return;
+    game.resize(stage.clientWidth, stage.clientHeight);
+    game.render();
+  };
+
+  const load = () => {
+    loading ??= import(THREE_URL)
+      .then((THREE) => {
+        game = buildRoadHop(THREE, canvas);
+        measure();
+        if (state === "idle" || state === "error") showState("idle");
+      })
+      .catch(() => {
+        loading = null;
+        showState("error");
+      });
+    return loading;
+  };
+
+  const tick = (deltaTime) => {
+    if (win.hidden || (!fullScreen.element && scene?.classList.contains("is-diving"))) {
+      pause();
+      return;
+    }
+
+    const hitByVehicle = game.update(Math.min(deltaTime / 1000, 0.05));
+    scoreLabel.textContent = game.score;
+    game.render();
+
+    if (!hitByVehicle) return;
+    ticker.remove(tick);
+    if (game.score > best) {
+      best = game.score;
+      newBest = true;
+      try {
+        localStorage.setItem("road-hop-best", String(best));
+      } catch {}
+    }
+    showState("over");
+  };
+
+  function pause() {
+    ticker.remove(tick);
+    if (state === "playing") showState("paused");
+  }
+
+  const play = () => {
+    if (state === "error") {
+      showState("idle");
+      load();
+      return;
+    }
+    if (!game || state === "playing") return;
+    if (touchPlay) fullScreen.enter();
+    if (state !== "paused") {
+      game.reset();
+      newBest = false;
+    }
+    showState("playing");
+    (fullScreen.element ?? win).focus({ preventScroll: true });
+    measure();
+    ticker.add(tick);
+  };
+
+  playButton.addEventListener("click", play);
+
+  const move = (direction) => {
+    if (state === "playing") game.queueMove(direction);
+  };
+
+  // Keys only move the hopper while this game's window (or its full screen) has focus.
+  const keys = {
+    ArrowUp: "forward", KeyW: "forward",
+    ArrowDown: "backward", KeyS: "backward",
+    ArrowLeft: "left", KeyA: "left",
+    ArrowRight: "right", KeyD: "right",
+  };
+
+  // The on-screen keycap guide lights up while its key (WASD or arrow) is held.
+  const keycaps = Object.fromEntries([...stage.querySelectorAll(".hop-key")].map((key) => [key.dataset.key, key]));
+  const lightKey = (direction, on) => keycaps[direction]?.classList.toggle("is-pressed", on);
+
+  document.addEventListener("keyup", (event) => {
+    if (keys[event.code]) lightKey(keys[event.code], false);
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (!fullScreen.element && !win.contains(document.activeElement)) return;
+    if (keys[event.code]) {
+      lightKey(keys[event.code], state === "playing");
+      if (!event.repeat) move(keys[event.code]);
+    } else if (event.code === "Space" || (event.code === "Enter" && state !== "playing")) {
+      if (state === "playing") move("forward");
+      else play();
+    } else if (event.code === "Escape" && fullScreen.element) fullScreen.exit();
+    else return;
+    event.preventDefault();
+  });
+
+  stage.querySelectorAll("[data-move]").forEach((button) => {
+    button.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      move(button.dataset.move);
+    });
+    button.addEventListener("contextmenu", (event) => event.preventDefault());
+  });
+
+  // Tap (or click) to hop forward; swipe to hop in that direction.
+  let swipeStart = null;
+  canvas.addEventListener("pointerdown", (event) => {
+    swipeStart = { x: event.clientX, y: event.clientY };
+  });
+  canvas.addEventListener("pointerup", (event) => {
+    if (!swipeStart) return;
+    const dx = event.clientX - swipeStart.x;
+    const dy = event.clientY - swipeStart.y;
+    swipeStart = null;
+    if (Math.hypot(dx, dy) < 18) move("forward");
+    else if (Math.abs(dx) > Math.abs(dy)) move(dx > 0 ? "right" : "left");
+    else move(dy < 0 ? "forward" : "backward");
+  });
+  canvas.addEventListener("pointercancel", () => {
+    swipeStart = null;
+  });
+
+  if (touchPlay) stage.classList.add("has-touch");
+
+  win.addEventListener("app:open", () => {
+    showState("idle");
+    load();
+  });
+  win.addEventListener("app:minimize", pause);
+  win.addEventListener("app:close", () => {
+    fullScreen.exit();
+    ticker.remove(tick);
+    if (state === "playing" || state === "paused") showState("idle");
+  });
+
+  new ResizeObserver(measure).observe(stage);
+  showState("idle");
+};
+
+initRoadHop();
 
 /* ---------- Scroll effects ---------- */
 

@@ -46,10 +46,6 @@
         <p class="preloader-brand">
           <span style="--i: 0">i</span><span style="--i: 1">v</span><span style="--i: 2">a</span><span style="--i: 3">n</span>
         </p>
-        <div class="preloader-progress">
-          <div class="preloader-bar"><span></span></div>
-          <span data-preloader-count>000</span>
-        </div>
       </div>
     </div>
 
@@ -86,8 +82,8 @@
                 <div class="laptop-screen-grid"></div>
                 <div class="laptop-screen-inner">
                   <div class="laptop-meta">
-                    <span>+63 912 345 6789</span>
-                    <span>ivanm.dev25@gmail.com</span>
+                    <a href="tel:+639369251864">+63 936 925 1864</a>
+                    <a href="mailto:ivanm.dev25@gmail.com">ivanm.dev25@gmail.com</a>
                     <span class="laptop-clock" data-clock></span>
                   </div>
                   <div class="laptop-copy">
@@ -131,15 +127,50 @@
                       <span class="window-title">Projects</span>
                     </div>
                     <div class="window-body files-body">
-                      <div class="files-side" aria-hidden="true">
-                        <span class="files-side-head">Favorites</span>
-                        <span class="is-active">Projects</span>
-                        <span>Desktop</span>
-                        <span>Downloads</span>
+                      <div class="files-side" role="group" aria-label="Folders">
+                        <span class="files-side-head" aria-hidden="true">Favorites</span>
+                        <button class="files-tab" type="button" data-tab="projects" aria-current="true">Projects</button>
+                        <button class="files-tab" type="button" data-tab="resume">Resume</button>
+                        <button class="files-tab" type="button" data-tab="contact">Contact</button>
                       </div>
                       <div class="files-main">
                         <div class="files-grid"></div>
-                        <p class="files-status"></p>
+                        <p class="files-status" aria-live="polite"></p>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section class="screen-window window-hop" data-window="hop" role="dialog" aria-label="Road Hop" tabindex="-1" hidden>
+                    <div class="window-bar">
+                      <div class="window-dots">
+                        <button class="window-dot window-close" type="button" aria-label="Close Road Hop"></button>
+                        <button class="window-dot window-min" type="button" aria-label="Minimize Road Hop"></button>
+                        <button class="window-dot window-max" type="button" aria-label="Maximize Road Hop"></button>
+                      </div>
+                      <span class="window-title">Road Hop</span>
+                    </div>
+                    <div class="window-body game-body">
+                      <div class="game-stage hop-stage" data-state="idle">
+                        <canvas role="img" aria-label="Road Hop game"></canvas>
+                        <p class="hop-score" aria-hidden="true">0</p>
+                        <div class="hop-keys" aria-hidden="true">
+                          <span class="hop-key" data-key="forward">W</span>
+                          <span class="hop-key" data-key="left">A</span>
+                          <span class="hop-key" data-key="backward">S</span>
+                          <span class="hop-key" data-key="right">D</span>
+                          <span class="hop-keys-hint">or arrow keys</span>
+                        </div>
+                        <div class="hop-pad">
+                          <button type="button" data-move="forward" tabindex="-1" aria-label="Hop forward">▲</button>
+                          <button type="button" data-move="left" tabindex="-1" aria-label="Hop left">◀</button>
+                          <button type="button" data-move="backward" tabindex="-1" aria-label="Hop back">▼</button>
+                          <button type="button" data-move="right" tabindex="-1" aria-label="Hop right">▶</button>
+                        </div>
+                        <div class="game-panel">
+                          <p class="game-panel-title">Road Hop</p>
+                          <p class="game-panel-text"></p>
+                          <button class="game-play" type="button">Play</button>
+                        </div>
                       </div>
                     </div>
                   </section>
@@ -156,6 +187,12 @@
                         <svg viewBox="0 0 24 24"><path fill="#fff" d="M17 2.8 9.7 9.6 5.4 6.3 3.4 7.4v9.2l2 1.1 4.3-3.3 7.3 6.8 3.6-1.7V4.5ZM17 7.9v8.2L11.6 12Z" /></svg>
                       </span>
                       <span class="dock-label" aria-hidden="true">VS Code</span>
+                    </button>
+                    <button class="dock-app" type="button" data-app="hop" aria-label="Road Hop game" aria-expanded="false">
+                      <span class="dock-icon icon-hop" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><rect x="2" y="17" width="20" height="4" rx="1" fill="rgba(0,0,0,0.25)" /><rect x="7" y="8" width="10" height="10" rx="1.5" fill="#fff" /><rect x="10.5" y="5" width="3" height="3" rx="0.6" fill="#f0619a" /><rect x="13.6" y="10.5" width="1.8" height="1.8" fill="#1d2433" /><rect x="17" y="12" width="2.4" height="1.6" fill="#ffb547" /></svg>
+                      </span>
+                      <span class="dock-label" aria-hidden="true">Road Hop</span>
                     </button>
                     <span class="dock-divider" aria-hidden="true"></span>
                     <a class="dock-app" href="https://www.facebook.com/ivanm.dev" target="_blank" rel="noreferrer" aria-label="Facebook">
